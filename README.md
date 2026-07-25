@@ -1,5 +1,13 @@
 # Palworld Microsoft Store — WorldOption.sav Editor
 
+<p align="center">
+  <img src="screenshots/01-main-window.png" alt="Main window — world list with real names" width="900" />
+</p>
+
+<p align="center">
+  <img src="screenshots/02-worldoption-editor.png" alt="WorldOption.sav editor with search" width="900" />
+</p>
+
 Dark GUI toolkit to **scan**, **extract**, and **edit** Palworld world settings for the **Microsoft Store / PC Game Pass** version.
 
 MS Store saves live in Xbox **WGS** containers (opaque folders under `%LocalAppData%\Packages\…`), not the Steam-style path. This tool:
