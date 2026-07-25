@@ -150,22 +150,37 @@ class PropertyRow(ctk.CTkFrame):
         sw.configure(text="On" if v else "Off")
         self.on_change(self.field.name, v)
 
+    def _parse_entry_text(self, raw: str) -> Any:
+        t = self.field.prop_type
+        if t == "IntProperty":
+            return int(float(raw))
+        if t == "FloatProperty":
+            return float(raw)
+        if t == "ArrayProperty":
+            return json.loads(raw) if raw.strip() else []
+        return raw
+
     def _entry_commit(self, entry: ctk.CTkEntry):
         raw = entry.get()
-        t = self.field.prop_type
         try:
-            if t == "IntProperty":
-                val: Any = int(float(raw))  # allow "10.0"
-            elif t == "FloatProperty":
-                val = float(raw)
-            elif t == "ArrayProperty":
-                val = json.loads(raw) if raw.strip() else []
-            else:
-                val = raw
+            val = self._parse_entry_text(raw)
             self.on_change(self.field.name, val)
             entry.configure(border_color="#2a3142")
         except Exception:
             entry.configure(border_color=RED)
+
+    def get_ui_value(self) -> Any:
+        """Read whatever is currently shown in the editor widget."""
+        ed = self.editor
+        t = self.field.prop_type
+        if t == "BoolProperty" and hasattr(ed, "_var"):
+            return bool(ed._var.get())  # type: ignore[attr-defined]
+        if getattr(ed, "_is_combo", False):
+            return ed.get()
+        # CTkEntry (int/float/str/array/enum freeform)
+        if hasattr(ed, "get"):
+            return self._parse_entry_text(ed.get())
+        return self.field.value
 
     def matches(self, query: str) -> bool:
         q = query.lower().strip()
@@ -292,8 +307,8 @@ class WorldOptionEditor(ctk.CTkToplevel):
 
         self.save_btn = ctk.CTkButton(
             foot,
-            text="Save to live save",
-            width=160,
+            text="Save changes",
+            width=130,
             height=36,
             corner_radius=8,
             fg_color=GREEN,
@@ -303,6 +318,20 @@ class WorldOptionEditor(ctk.CTkToplevel):
             command=self._save,
         )
         self.save_btn.pack(side="right")
+
+        self.force_btn = ctk.CTkButton(
+            foot,
+            text="Force apply all to world",
+            width=170,
+            height=36,
+            corner_radius=8,
+            fg_color=ORANGE,
+            hover_color="#d4893a",
+            text_color="#1a1208",
+            font=ctk.CTkFont(weight="bold"),
+            command=self._force_apply_all,
+        )
+        self.force_btn.pack(side="right", padx=(0, 8))
 
         self.dirty_lbl = ctk.CTkLabel(
             foot, text="", text_color=ORANGE, font=ctk.CTkFont(size=12)
@@ -402,13 +431,60 @@ class WorldOptionEditor(ctk.CTkToplevel):
         self._build_rows()
         self.status_lbl.configure(text="Reset", text_color=MUTED)
 
+    def _collect_ui_values(self) -> dict[str, Any]:
+        """Snapshot every field from the widgets currently on screen."""
+        values: dict[str, Any] = {}
+        errors: list[str] = []
+        for row in self.rows:
+            try:
+                values[row.field.name] = row.get_ui_value()
+            except Exception as e:
+                errors.append(f"{row.field.name}: {e}")
+        if errors:
+            raise ValueError(
+                "Invalid value(s) in editor:\n" + "\n".join(errors[:12])
+            )
+        return values
+
     def _save(self):
+        """Save only fields the user changed (pending)."""
         if not self.doc:
             return
-        if not self.pending:
-            messagebox.showinfo("Nothing to save", "No changes yet.", parent=self)
-            return
+        # pull any focused entry into pending first
+        try:
+            ui = self._collect_ui_values()
+            for name, val in ui.items():
+                if name in self.pending:
+                    self.pending[name] = val
+        except Exception:
+            pass
 
+        if not self.pending:
+            messagebox.showinfo(
+                "Nothing to save",
+                "No changes yet.\n\n"
+                "Edit a value first, or use “Force apply all to world” "
+                "to write every setting shown in the editor.",
+                parent=self,
+            )
+            return
+        self._write_to_live(self.pending, force_all=False)
+
+    def _force_apply_all(self):
+        """Write every value currently shown in the editor to the live world."""
+        if not self.doc:
+            return
+        try:
+            values = self._collect_ui_values()
+        except Exception as e:
+            messagebox.showerror("Invalid value", str(e), parent=self)
+            return
+        if not values:
+            messagebox.showinfo("Empty", "No settings loaded.", parent=self)
+            return
+        self._write_to_live(values, force_all=True)
+
+    def _write_to_live(self, values: dict[str, Any], *, force_all: bool):
         if worlds.palworld_running():
             messagebox.showwarning(
                 "Game is running",
@@ -418,39 +494,68 @@ class WorldOptionEditor(ctk.CTkToplevel):
             )
             return
 
-        # validate by applying to a working copy first
         try:
-            # re-load fresh doc so we don't double-apply
+            # re-load fresh doc so we write against disk truth + full UI snapshot
+            from palworld_ms.worldoption import apply_field_value
+
             doc = load_worldoption(self.doc.path)
-            changed = doc.apply_changes(self.pending)
-            if not changed:
-                messagebox.showinfo("No changes", "Values match existing save.", parent=self)
-                return
+            if force_all:
+                fmap = doc.field_map()
+                for name, val in values.items():
+                    f = fmap.get(name)
+                    if f is None:
+                        continue
+                    apply_field_value(f, val)
+                label_count = len(values)
+                confirm_title = "Force apply all"
+                confirm_msg = (
+                    f"FORCE write ALL {label_count} settings from the editor\n"
+                    f"into the live MS Store world?\n\n"
+                    f"World: {self.info.display_name}\n\n"
+                    "This overwrites WorldOption.sav with everything you see\n"
+                    "in the editor (not only marked changes).\n\n"
+                    "Auto-backup will be created."
+                )
+                success_msg = f"Force-applied {label_count} setting(s)."
+            else:
+                applied = doc.apply_changes(values)
+                if not applied:
+                    messagebox.showinfo(
+                        "No changes",
+                        "Values match the existing save file.\n\n"
+                        "Use “Force apply all to world” if you still want "
+                        "to rewrite the file.",
+                        parent=self,
+                    )
+                    return
+                label_count = len(applied)
+                confirm_title = "Save changes"
+                confirm_msg = (
+                    f"Write {label_count} change(s) to live MS Store save?\n\n"
+                    + ", ".join(applied[:12])
+                    + ("…" if len(applied) > 12 else "")
+                    + "\n\nAuto-backup will be created."
+                )
+                success_msg = f"Updated {label_count} setting(s)."
         except Exception as e:
             messagebox.showerror("Invalid value", str(e), parent=self)
             return
 
-        if not messagebox.askyesno(
-            "Save WorldOption",
-            f"Write {len(changed)} change(s) to live MS Store save?\n\n"
-            + ", ".join(changed[:12])
-            + ("…" if len(changed) > 12 else "")
-            + "\n\nAuto-backup will be created.",
-            parent=self,
-        ):
+        if not messagebox.askyesno(confirm_title, confirm_msg, parent=self):
             return
 
         try:
             bak = worlds.backup_file(doc.path, self.backup_dir)
             save_worldoption(doc)
-            # refresh in-memory
             self.doc = load_worldoption(doc.path)
             self.pending.clear()
             self.dirty_lbl.configure(text="")
             self._build_rows()
-            self.status_lbl.configure(text="Saved", text_color=GREEN)
+            self.status_lbl.configure(
+                text="Force applied" if force_all else "Saved",
+                text_color=GREEN,
+            )
 
-            # update WorldInfo cache if coop present
             coop = next(
                 (f.value for f in self.doc.fields if f.name == "CoopPlayerMaxNum"),
                 None,
@@ -463,14 +568,16 @@ class WorldOptionEditor(ctk.CTkToplevel):
             )
             if srv is not None:
                 self.info.server_max = int(srv)
-            self.info.worldoption_format = self.doc.magic.decode("ascii", errors="replace")
+            self.info.worldoption_format = self.doc.magic.decode(
+                "ascii", errors="replace"
+            )
 
             if self.on_saved:
                 self.on_saved()
 
             messagebox.showinfo(
                 "Saved",
-                f"Updated {len(changed)} setting(s).\nBackup:\n{bak}",
+                f"{success_msg}\nBackup:\n{bak}",
                 parent=self,
             )
         except Exception as e:
