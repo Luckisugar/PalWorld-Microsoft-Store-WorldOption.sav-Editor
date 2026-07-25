@@ -1,0 +1,2 @@
+customtkinter>=5.2.0
+palworld-save-tools>=0.24.0
