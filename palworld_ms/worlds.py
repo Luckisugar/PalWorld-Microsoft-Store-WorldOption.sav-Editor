@@ -26,6 +26,11 @@ class WorldInfo:
     worldoption_format: str | None = None
     has_worldoption: bool = False
     slot_backups: int = 0
+    # From LevelMeta.sav (human-readable)
+    world_name: str | None = None
+    host_player_name: str | None = None
+    host_player_level: int | None = None
+    in_game_day: int | None = None
 
     @property
     def short_id(self) -> str:
@@ -37,7 +42,20 @@ class WorldInfo:
 
     @property
     def display_name(self) -> str:
-        return f"{self.short_id}…  ·  {self.player_count} player(s)"
+        if self.world_name:
+            return self.world_name
+        return f"{self.short_id}…"
+
+    @property
+    def display_subtitle(self) -> str:
+        bits = [f"{self.player_count} player(s)"]
+        if self.host_player_name:
+            bits.append(f"host {self.host_player_name}")
+        if self.host_player_level is not None:
+            bits.append(f"Lv.{self.host_player_level}")
+        if self.in_game_day is not None:
+            bits.append(f"Day {self.in_game_day}")
+        return "  ·  ".join(bits)
 
 
 ROOT_FILES = {"UserOption.sav", "GlobalPalStorage.sav", "GDKBackupTimestamps.sav"}
@@ -115,10 +133,51 @@ def discover_worlds(package: str = wgs.PALWORLD_PACKAGE) -> list[WorldInfo]:
                     info.worldoption_format = "?"
                     info.coop_max = None
 
+            if rel.endswith("/LevelMeta.sav") and "/Slot" not in rel:
+                _fill_level_meta(info, Path(entry["path"]))
+
     # sort by most recently modified
     result = list(worlds.values())
     result.sort(key=lambda w: w.mtime or datetime.min, reverse=True)
     return result
+
+
+def _fill_level_meta(info: WorldInfo, path: Path) -> None:
+    """Read WorldName / host / day from LevelMeta.sav."""
+    try:
+        from .worldoption import load_gvas_bytes
+        from palworld_save_tools.gvas import GvasFile
+
+        gvas_b, _magic, _st = load_gvas_bytes(path.read_bytes())
+        g = GvasFile.read(gvas_b)
+        save = g.properties.get("SaveData")
+        if not isinstance(save, dict):
+            return
+        val = save.get("value")
+        if not isinstance(val, dict):
+            return
+
+        def _scalar(key: str):
+            prop = val.get(key)
+            if isinstance(prop, dict) and "value" in prop:
+                return prop["value"]
+            return None
+
+        name = _scalar("WorldName")
+        if isinstance(name, str) and name.strip():
+            info.world_name = name.strip()
+        host = _scalar("HostPlayerName")
+        if isinstance(host, str) and host.strip():
+            info.host_player_name = host.strip()
+        lvl = _scalar("HostPlayerLevel")
+        if isinstance(lvl, int):
+            info.host_player_level = lvl
+        day = _scalar("InGameDay")
+        if isinstance(day, int):
+            info.in_game_day = day
+    except Exception:
+        # Keep GUID-only display if meta can't be parsed
+        pass
 
 
 def extract_world(info: WorldInfo, dest_dir: Path, *, include_slots: bool = True) -> Path:

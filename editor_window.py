@@ -196,7 +196,7 @@ class WorldOptionEditor(ctk.CTkToplevel):
         self.pending: dict[str, Any] = {}
         self.rows: list[PropertyRow] = []
 
-        self.title(f"Edit WorldOption — {info.short_id}…")
+        self.title(f"Edit WorldOption — {info.display_name}")
         self.geometry("920x700")
         self.minsize(760, 520)
         self.configure(fg_color=BG)
@@ -220,7 +220,7 @@ class WorldOptionEditor(ctk.CTkToplevel):
 
         self.meta_lbl = ctk.CTkLabel(
             header,
-            text=f"{self.info.short_id}…  ·  loading…",
+            text=f"{self.info.display_name}  ·  loading…",
             font=ctk.CTkFont(size=12),
             text_color=MUTED,
         )
@@ -325,8 +325,8 @@ class WorldOptionEditor(ctk.CTkToplevel):
             magic = self.doc.magic.decode("ascii", errors="replace")
             self.meta_lbl.configure(
                 text=(
-                    f"{self.info.short_id}…  ·  {len(self.doc.fields)} settings  ·  "
-                    f"{magic}  ·  {Path(blob).name[:8]}…"
+                    f"{self.info.display_name}  ·  {len(self.doc.fields)} settings  ·  "
+                    f"{magic}  ·  ID {self.info.short_id}…"
                 )
             )
             self._build_rows()

@@ -81,12 +81,12 @@ class WorldCard(ctk.CTkFrame):
 
         title = ctk.CTkLabel(
             top,
-            text=self.info.short_id.upper() + "…",
+            text=self.info.display_name,
             font=ctk.CTkFont(family="Segoe UI Semibold", size=15),
             text_color=TEXT,
             anchor="w",
         )
-        title.pack(side="left")
+        title.pack(side="left", fill="x", expand=True)
         widgets.append(title)
 
         badge_txt = f"{self.info.player_count}p"
@@ -107,11 +107,7 @@ class WorldCard(ctk.CTkFrame):
 
         meta = ctk.CTkLabel(
             pad,
-            text=(
-                f"Level {_fmt_size(self.info.level_size)}  ·  "
-                f"Total {_fmt_size(self.info.total_size)}  ·  "
-                f"{_fmt_time(self.info.mtime)}"
-            ),
+            text=self.info.display_subtitle,
             font=ctk.CTkFont(size=11),
             text_color=MUTED,
             anchor="w",
@@ -122,7 +118,11 @@ class WorldCard(ctk.CTkFrame):
         fmt = self.info.worldoption_format or "—"
         sub = ctk.CTkLabel(
             pad,
-            text=f"ID {self.info.world_id}   ·   WorldOption {fmt}",
+            text=(
+                f"{_fmt_size(self.info.level_size)} level  ·  "
+                f"{_fmt_time(self.info.mtime)}  ·  "
+                f"ID {self.info.short_id}…  ·  {fmt}"
+            ),
             font=ctk.CTkFont(size=10),
             text_color="#5c6478",
             anchor="w",
@@ -441,8 +441,14 @@ class App(ctk.CTk):
         players = "\n".join(f"  · {p[:8]}…" for p in info.players) or "  · (none)"
         coop = info.coop_max if info.coop_max is not None else "?"
         server = info.server_max if info.server_max is not None else "?"
+        host = info.host_player_name or "—"
+        lvl = info.host_player_level if info.host_player_level is not None else "—"
+        day = info.in_game_day if info.in_game_day is not None else "—"
         text = (
-            f"{info.short_id.upper()}…\n\n"
+            f"{info.display_name}\n"
+            f"ID {info.short_id}…\n\n"
+            f"Host: {host}  (Lv.{lvl})\n"
+            f"In-game day: {day}\n"
             f"Players: {info.player_count}\n{players}\n\n"
             f"CoopPlayerMaxNum:  {coop}\n"
             f"ServerPlayerMaxNum: {server}\n"
@@ -456,7 +462,9 @@ class App(ctk.CTk):
         self.edit_btn.configure(
             state="normal" if info.has_worldoption else "disabled"
         )
-        self.log(f"Selected {info.short_id}… ({info.player_count} players)")
+        self.log(
+            f"Selected {info.display_name} ({info.short_id}…, {info.player_count} players)"
+        )
 
     # ── extract ───────────────────────────────────────────────────────────
     def extract_selected(self):
