@@ -1,26 +1,14 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+title Palworld MS Toolkit
 
-REM System Python for GUI (needs tkinter). PlM edits use Downloads\python312 worker.
-where python >nul 2>&1
-if errorlevel 1 (
-  echo Python not found on PATH.
+REM Pure batch/PowerShell bootstrap — works even if Python is not installed.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0bootstrap.ps1"
+set ERR=%ERRORLEVEL%
+if %ERR% neq 0 (
+  echo.
+  echo Launcher failed. See messages above.
   pause
-  exit /b 1
 )
-
-python -c "import customtkinter" 1>nul 2>nul
-if errorlevel 1 (
-  echo Installing customtkinter...
-  python -m pip install customtkinter --quiet
-)
-python -c "import palworld_save_tools" 1>nul 2>nul
-if errorlevel 1 (
-  echo Installing palworld-save-tools...
-  python -m pip install palworld-save-tools --quiet
-)
-
-echo Starting Palworld MS Toolkit...
-python "%~dp0app.py"
-if errorlevel 1 pause
+exit /b %ERR%

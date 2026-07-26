@@ -186,13 +186,23 @@ class PropertyRow(ctk.CTkFrame):
         q = query.lower().strip()
         if not q:
             return True
-        blob = f"{self.field.name} {self.field.display_type} {self.field.value}".lower()
-        return q in blob
-
-    def set_visible(self, yes: bool):
-        # packing is managed by parent filter pass
-        if not yes and self.winfo_ismapped():
-            self.pack_forget()
+        # multi-token AND search across name / type / stored + live UI value
+        try:
+            ui_val = self.get_ui_value()
+        except Exception:
+            ui_val = self.field.value
+        blob = " ".join(
+            [
+                self.field.name,
+                self.field.display_type,
+                self.field.prop_type,
+                str(self.field.value),
+                str(ui_val),
+                self.field.group,
+            ]
+        ).lower()
+        tokens = q.split()
+        return all(tok in blob for tok in tokens)
 
 
 class WorldOptionEditor(ctk.CTkToplevel):
@@ -249,13 +259,13 @@ class WorldOptionEditor(ctk.CTkToplevel):
         # search bar
         search_bar = ctk.CTkFrame(self, fg_color=CARD, corner_radius=12)
         search_bar.pack(fill="x", padx=18, pady=(4, 8))
+        search_bar.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
             search_bar, text="Search", text_color=MUTED, font=ctk.CTkFont(size=12)
-        ).pack(side="left", padx=(14, 8), pady=10)
+        ).grid(row=0, column=0, padx=(14, 8), pady=10, sticky="w")
 
-        self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self._filter())
+        self.search_var = ctk.StringVar(value="")
         self.search_entry = ctk.CTkEntry(
             search_bar,
             textvariable=self.search_var,
@@ -264,18 +274,37 @@ class WorldOptionEditor(ctk.CTkToplevel):
             corner_radius=8,
             border_color="#2a3142",
         )
-        self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=10)
+        self.search_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=10)
+        # Bind multiple ways — CTk StringVar trace is flaky on some setups
+        self.search_var.trace_add("write", self._on_search_var)
+        self.search_entry.bind("<KeyRelease>", self._on_search_key)
+        self.search_entry.bind("<Return>", self._on_search_key)
+
+        self.clear_search_btn = ctk.CTkButton(
+            search_bar,
+            text="Clear",
+            width=64,
+            height=30,
+            corner_radius=8,
+            fg_color="#2a3142",
+            hover_color="#353e52",
+            command=self._clear_search,
+        )
+        self.clear_search_btn.grid(row=0, column=2, padx=(0, 8), pady=10)
 
         self.count_lbl = ctk.CTkLabel(
             search_bar, text="", width=90, text_color=MUTED, font=ctk.CTkFont(size=12)
         )
-        self.count_lbl.pack(side="right", padx=(0, 14))
+        self.count_lbl.grid(row=0, column=3, padx=(0, 14), pady=10, sticky="e")
 
-        # list
+        # list — use grid inside scroll frame so show/hide is reliable
         self.list_frame = ctk.CTkScrollableFrame(
             self, fg_color=CARD, corner_radius=12
         )
         self.list_frame.pack(fill="both", expand=True, padx=18, pady=(0, 8))
+        self.list_frame.grid_columnconfigure(0, weight=1)
+        self._group_headers: list[ctk.CTkLabel] = []
+        self._filter_after_id: str | None = None
 
         # footer actions
         foot = ctk.CTkFrame(self, fg_color=BG)
@@ -370,17 +399,38 @@ class WorldOptionEditor(ctk.CTkToplevel):
         for w in self.list_frame.winfo_children():
             w.destroy()
         self.rows.clear()
+        self._group_headers.clear()
         if not self.doc:
             return
 
+        r = 0
         # Settings first (gameplay), then Root
         for group in ("Settings", "Root"):
-            for field in (f for f in self.doc.fields if f.group == group):
+            group_fields = [f for f in self.doc.fields if f.group == group]
+            if not group_fields:
+                continue
+            hdr = ctk.CTkLabel(
+                self.list_frame,
+                text=group.upper(),
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=MUTED,
+                anchor="w",
+            )
+            hdr.grid(row=r, column=0, sticky="ew", padx=10, pady=(12, 4))
+            hdr._group = group  # type: ignore
+            hdr._is_group_hdr = True  # type: ignore
+            self._group_headers.append(hdr)
+            r += 1
+
+            for field in group_fields:
                 row = PropertyRow(
                     self.list_frame, field, on_change=self._on_change
                 )
                 row._group = group  # type: ignore
+                row.grid(row=r, column=0, sticky="ew", padx=6, pady=3)
                 self.rows.append(row)
+                r += 1
+
         self._filter()
 
     def _on_change(self, name: str, value: Any):
@@ -390,36 +440,65 @@ class WorldOptionEditor(ctk.CTkToplevel):
             text=f"{n} unsaved change{'s' if n != 1 else ''}" if n else ""
         )
 
+    def _on_search_var(self, *_args):
+        self._schedule_filter()
+
+    def _on_search_key(self, _event=None):
+        self._schedule_filter()
+
+    def _clear_search(self):
+        self.search_var.set("")
+        self._filter()
+
+    def _schedule_filter(self):
+        # debounce so typing stays smooth
+        if self._filter_after_id is not None:
+            try:
+                self.after_cancel(self._filter_after_id)
+            except Exception:
+                pass
+        self._filter_after_id = self.after(80, self._filter)
+
     def _filter(self):
-        q = self.search_var.get()
-        # hide all rows first, then re-pack matches in original order
-        for row in self.rows:
-            row.pack_forget()
+        self._filter_after_id = None
+        try:
+            q = self.search_var.get()
+        except Exception:
+            q = ""
+
         visible = 0
-        last_group = None
-        # destroy old dynamic group labels if any — rebuild simple: only rows
-        for child in list(self.list_frame.winfo_children()):
-            if getattr(child, "_is_group_hdr", False):
-                child.destroy()
+        visible_by_group: dict[str, int] = {}
 
         for row in self.rows:
-            if not row.matches(q):
-                continue
-            group = getattr(row, "_group", "")
-            if group and group != last_group:
-                hdr = ctk.CTkLabel(
-                    self.list_frame,
-                    text=group.upper(),
-                    font=ctk.CTkFont(size=11, weight="bold"),
-                    text_color=MUTED,
-                    anchor="w",
-                )
-                hdr._is_group_hdr = True  # type: ignore
-                hdr.pack(fill="x", padx=10, pady=(12, 4))
-                last_group = group
-            row.pack(fill="x", padx=6, pady=3)
-            visible += 1
-        self.count_lbl.configure(text=f"{visible} / {len(self.rows)}")
+            show = row.matches(q)
+            try:
+                if show:
+                    row.grid()
+                    visible += 1
+                    g = getattr(row, "_group", "") or ""
+                    visible_by_group[g] = visible_by_group.get(g, 0) + 1
+                else:
+                    row.grid_remove()
+            except Exception:
+                # last resort if grid state broken
+                if show:
+                    row.pack(fill="x", padx=6, pady=3)
+                    visible += 1
+                else:
+                    row.pack_forget()
+
+        for hdr in self._group_headers:
+            g = getattr(hdr, "_group", "")
+            try:
+                if visible_by_group.get(g, 0) > 0:
+                    hdr.grid()
+                else:
+                    hdr.grid_remove()
+            except Exception:
+                pass
+
+        total = len(self.rows)
+        self.count_lbl.configure(text=f"{visible} / {total}")
 
     def _reset(self):
         if not self.doc:

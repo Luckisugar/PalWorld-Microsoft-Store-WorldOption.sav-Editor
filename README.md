@@ -47,13 +47,15 @@ Internet required once (~15 MB). No admin rights.
 
 ## Quick start
 
+**No Python installed?** Just double-click `run.bat` — it will offer to download official Python from python.org, install packages, then launch.
+
 ```bat
 git clone https://github.com/Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor.git
 cd PalWorld-Microsoft-Store-WorldOption.sav-Editor
 run.bat
 ```
 
-Or:
+Or if you already have Python 3.10+:
 
 ```bat
 python -m pip install -r requirements.txt
