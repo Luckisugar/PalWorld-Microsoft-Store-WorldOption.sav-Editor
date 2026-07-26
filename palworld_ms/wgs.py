@@ -158,4 +158,114 @@ def palworld_save_entries(containers: list[WgsContainer]) -> list[dict[str, Any]
 
 
 def is_palworld_installed(package: str = PALWORLD_PACKAGE) -> bool:
-    return package_path(package).is_dir()
+    """True if MS Store / Game Pass Palworld package data is present."""
+    return detect_install(package)["installed"]
+
+
+def detect_install(package: str = PALWORLD_PACKAGE) -> dict[str, Any]:
+    """
+    Detect Microsoft Store / Xbox / Game Pass Palworld on this PC.
+
+    Checks:
+    1. LocalAppData Packages folder (always present if Store game was launched)
+    2. WGS save folder
+    3. Get-AppxPackage (registered MSIX/APPX package)
+    """
+    pkg = package_path(package)
+    wgs_dir = pkg / "SystemAppData" / "wgs"
+    user_dirs = find_user_dirs(package) if wgs_dir.is_dir() else []
+
+    appx_name = None
+    appx_version = None
+    appx_install = None
+    try:
+        import subprocess
+
+        # Family name is PocketpairInc.Palworld_ad4psfrxyesvt
+        ps = (
+            "Get-AppxPackage -Name 'PocketpairInc.Palworld' -ErrorAction SilentlyContinue "
+            "| Select-Object -First 1 Name, Version, InstallLocation "
+            "| ConvertTo-Json -Compress"
+        )
+        out = subprocess.check_output(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                ps,
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=20,
+        ).strip()
+        if out and out not in ("null", ""):
+            import json
+
+            data = json.loads(out)
+            if isinstance(data, list) and data:
+                data = data[0]
+            if isinstance(data, dict):
+                appx_name = data.get("Name")
+                appx_version = str(data.get("Version") or "") or None
+                appx_install = data.get("InstallLocation")
+    except Exception:
+        pass
+
+    # Also accept any package folder matching PocketpairInc.Palworld_*
+    alt_packages: list[str] = []
+    try:
+        if PACKAGES_ROOT.is_dir():
+            for p in PACKAGES_ROOT.iterdir():
+                if p.is_dir() and p.name.startswith("PocketpairInc.Palworld"):
+                    alt_packages.append(p.name)
+    except Exception:
+        pass
+
+    package_present = pkg.is_dir() or bool(alt_packages)
+    appx_present = bool(appx_name)
+    has_saves = bool(user_dirs)
+    # "Installed" if package folder OR Appx registration exists
+    installed = package_present or appx_present
+
+    # Friendly reason for UI
+    if installed and has_saves:
+        status = "ok"
+        message = (
+            f"Microsoft Store Palworld found"
+            + (f" (v{appx_version})" if appx_version else "")
+            + f" with {len(user_dirs)} save profile(s)."
+        )
+    elif installed and not has_saves:
+        status = "no_saves"
+        message = (
+            "Microsoft Store Palworld is installed, but no world saves were found yet.\n\n"
+            "Launch the game once from the Microsoft Store / Xbox app, "
+            "create or load a world, then scan again."
+        )
+    else:
+        status = "missing"
+        message = (
+            "Microsoft Store / Game Pass Palworld was NOT found on this PC.\n\n"
+            "This tool only works with the Microsoft Store (or PC Game Pass) version.\n"
+            "It will not find Steam-only installs.\n\n"
+            "Install Palworld from the Microsoft Store or Xbox app, "
+            "launch it once, then re-open this tool.\n\n"
+            f"Looked for package:\n{pkg}"
+        )
+
+    return {
+        "installed": installed,
+        "status": status,  # ok | no_saves | missing
+        "message": message,
+        "package_path": str(pkg),
+        "package_present": package_present,
+        "wgs_present": wgs_dir.is_dir(),
+        "save_profiles": len(user_dirs),
+        "appx_name": appx_name,
+        "appx_version": appx_version,
+        "appx_install_location": appx_install,
+        "alt_packages": alt_packages,
+    }

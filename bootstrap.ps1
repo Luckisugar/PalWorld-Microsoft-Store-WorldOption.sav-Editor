@@ -1,25 +1,30 @@
-# Palworld MS Toolkit launcher — works with ZERO Python installed.
+# Palworld MS Toolkit launcher - works with ZERO Python installed.
+# ASCII-only file so PowerShell on any Windows code page can parse it.
 # Checks for Python, offers official install, installs deps, starts the app.
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 
-$Host.UI.RawUI.WindowTitle = "Palworld MS Toolkit — Launcher"
+try {
+    $Host.UI.RawUI.WindowTitle = "Palworld MS Toolkit - Launcher"
+} catch {}
+
 Write-Host ""
-Write-Host "  Palworld MS Store Toolkit — Launcher" -ForegroundColor Cyan
+Write-Host "  Palworld MS Store Toolkit - Launcher" -ForegroundColor Cyan
 Write-Host "  =====================================" -ForegroundColor DarkCyan
 Write-Host ""
 
 function Test-PythonOk {
     param([string]$Exe)
-    if (-not $Exe -or -not (Test-Path $Exe)) { return $false }
+    if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) { return $false }
     try {
         $v = & $Exe -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null
         if (-not $v) { return $false }
         # Need 3.10+ with tkinter
         $parts = $v.Trim().Split(".")
-        $major = [int]$parts[0]; $minor = [int]$parts[1]
+        $major = [int]$parts[0]
+        $minor = [int]$parts[1]
         if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 10)) { return $false }
         & $Exe -c "import tkinter" 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $false }
@@ -30,28 +35,28 @@ function Test-PythonOk {
 }
 
 function Find-Python {
-    $candidates = @()
+    $candidates = New-Object System.Collections.Generic.List[string]
 
     # PATH
     foreach ($name in @("python", "python3", "py")) {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
-        if ($cmd) { $candidates += $cmd.Source }
+        if ($cmd -and $cmd.Source) { [void]$candidates.Add([string]$cmd.Source) }
     }
 
     # py launcher specific
     try {
         $py = & py -3 -c "import sys; print(sys.executable)" 2>$null
-        if ($py) { $candidates += $py.Trim() }
+        if ($py) { [void]$candidates.Add($py.Trim()) }
     } catch {}
     try {
         $py = & py -3.12 -c "import sys; print(sys.executable)" 2>$null
-        if ($py) { $candidates += $py.Trim() }
+        if ($py) { [void]$candidates.Add($py.Trim()) }
     } catch {}
 
     # Common install locations
     $local = $env:LOCALAPPDATA
-    $pf = ${env:ProgramFiles}
-    $paths = @(
+    $pf = $env:ProgramFiles
+    foreach ($p in @(
         "$local\Programs\Python\Python312\python.exe",
         "$local\Programs\Python\Python313\python.exe",
         "$local\Programs\Python\Python311\python.exe",
@@ -59,8 +64,9 @@ function Find-Python {
         "$pf\Python312\python.exe",
         "$pf\Python313\python.exe",
         "$local\PalworldMSTool\runtime\python-full\python.exe"
-    )
-    $candidates += $paths
+    )) {
+        [void]$candidates.Add($p)
+    }
 
     $seen = @{}
     foreach ($c in $candidates) {
@@ -106,7 +112,8 @@ function Install-OfficialPython {
 
     Write-Host "  Running installer (current user, with pip + tcl/tk, add to PATH)..." -ForegroundColor Cyan
     # Official silent flags: https://docs.python.org/3/using/windows.html
-    $args = @(
+    # NOTE: do not name this $args - reserved in PowerShell
+    $installArgs = @(
         "/passive",
         "InstallAllUsers=0",
         "PrependPath=1",
@@ -116,7 +123,7 @@ function Install-OfficialPython {
         "Include_test=0",
         "SimpleInstall=1"
     )
-    $p = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+    $p = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
     if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
         Write-Host "  Installer exit code: $($p.ExitCode)" -ForegroundColor Yellow
     }
@@ -127,7 +134,6 @@ function Install-OfficialPython {
 
     $py = Find-Python
     if (-not $py) {
-        # fallback known path after install
         $guess = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
         if (Test-PythonOk $guess) { $py = $guess }
     }
@@ -159,7 +165,7 @@ function Ensure-Deps {
     Write-Host "  Packages OK." -ForegroundColor Green
 }
 
-# ── main ──────────────────────────────────────────────────────────────────
+# --- main ---
 try {
     $python = Find-Python
     if (-not $python) {

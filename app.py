@@ -153,7 +153,7 @@ class App(ctk.CTk):
         self._busy = False
 
         self._build_ui()
-        self.after(120, self.scan)
+        self.after(80, self._startup_checks)
 
     # ── layout ────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -387,26 +387,75 @@ class App(ctk.CTk):
         else:
             messagebox.showwarning("Not found", f"WGS folder missing:\n{p}")
 
+    # ── startup / install checks ──────────────────────────────────────────
+    def _startup_checks(self):
+        """Run before first scan: require MS Store Palworld."""
+        info = wgs.detect_install()
+        self.log(info["message"].replace("\n", " "))
+        if info["status"] == "missing":
+            self.set_status("No MS Store Palworld", RED)
+            self._rebuild_list()
+            messagebox.showerror(
+                "Microsoft Store Palworld not found",
+                info["message"],
+            )
+            return
+        if info["status"] == "no_saves":
+            self.set_status("No saves yet", ORANGE)
+            messagebox.showwarning(
+                "No world saves yet",
+                info["message"],
+            )
+            # Still allow scan / PlM setup
+        self.scan()
+
+    def _ensure_ms_palworld(self, *, silent: bool = False) -> dict:
+        info = wgs.detect_install()
+        if info["status"] == "missing" and not silent:
+            self.set_status("No MS Store Palworld", RED)
+            self.log(info["message"].replace("\n", " "))
+            messagebox.showerror(
+                "Microsoft Store Palworld not found",
+                info["message"],
+            )
+        return info
+
     # ── scan ──────────────────────────────────────────────────────────────
     def scan(self):
         if self._busy:
             return
+
+        install = self._ensure_ms_palworld()
+        if install["status"] == "missing":
+            self.worlds = []
+            self._rebuild_list()
+            return
+
         self._set_busy(True)
         self.set_status("Scanning…", ORANGE)
         self.log("Scanning Microsoft Store Palworld saves…")
+        if install.get("appx_version"):
+            self.log(f"App package version: {install['appx_version']}")
 
         def work():
             try:
                 ok_plm, plm_msg = sav.palooz_available()
                 found = worlds.discover_worlds()
                 running = worlds.palworld_running()
-                self.after(0, lambda: self._scan_done(found, ok_plm, plm_msg, running, None))
+                self.after(
+                    0,
+                    lambda: self._scan_done(
+                        found, ok_plm, plm_msg, running, install, None
+                    ),
+                )
             except Exception as e:
-                self.after(0, lambda: self._scan_done([], False, "", False, e))
+                self.after(
+                    0, lambda: self._scan_done([], False, "", False, install, e)
+                )
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _scan_done(self, found, ok_plm, plm_msg, running, err):
+    def _scan_done(self, found, ok_plm, plm_msg, running, install, err):
         self._set_busy(False)
         if err:
             self.set_status("Scan failed", RED)
@@ -419,19 +468,29 @@ class App(ctk.CTk):
         self.set_status(f"{len(found)} world(s)", GREEN if found else ORANGE)
         self.log(f"Found {len(found)} world(s).")
         self.log(f"PlM/Oodle: {plm_msg}")
-        if not ok_plm:
+
+        if install and install.get("status") == "no_saves" and not found:
+            self.set_status("No saves yet", ORANGE)
+            self.log(
+                "MS Store Palworld is installed, but no worlds were found. "
+                "Launch the game and create/load a world first."
+            )
+        elif not found and install and install.get("installed"):
+            self.log(
+                "Package found but zero worlds. Play once in MS Store Palworld, then Scan again."
+            )
+
+        if not ok_plm and found:
             self.set_status("PlM support missing", ORANGE)
             self.log(
                 "Newer saves need a one-time PlM install. "
-                "Click “Install PlM support” (downloads official Python 3.12 "
+                "Click Install PlM support (downloads official Python 3.12 "
                 f"into {runtime.appdata_runtime_dir()})."
             )
             self.after(300, self._offer_plm_install)
         if running:
-            self.log("⚠ Palworld is running — close it before applying edits.")
+            self.log("WARNING: Palworld is running - close it before applying edits.")
             self.set_status(f"{len(found)} world(s) · game open", ORANGE)
-        if not wgs.is_palworld_installed():
-            self.log("Palworld MS Store package not found.")
 
         if found:
             self.select_world(found[0])
@@ -527,10 +586,28 @@ class App(ctk.CTk):
         self.cards.clear()
 
         if not self.worlds:
+            info = wgs.detect_install()
+            if info["status"] == "missing":
+                msg = (
+                    "Microsoft Store Palworld not found.\n\n"
+                    "Install Palworld from the Microsoft Store\n"
+                    "or Xbox app (Game Pass), launch it once,\n"
+                    "then click Scan saves."
+                )
+            elif info["status"] == "no_saves":
+                msg = (
+                    "MS Store Palworld is installed,\n"
+                    "but no world saves yet.\n\n"
+                    "Create or load a world in-game,\n"
+                    "then click Scan saves."
+                )
+            else:
+                msg = "No worlds found.\nClick Scan saves to refresh."
             ctk.CTkLabel(
                 self.list_frame,
-                text="No worlds found.\nIs Palworld (MS Store) installed?",
+                text=msg,
                 text_color=MUTED,
+                justify="center",
             ).pack(pady=40)
             return
 
