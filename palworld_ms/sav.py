@@ -9,6 +9,8 @@ import sys
 import zlib
 from pathlib import Path
 
+from . import runtime
+
 # Optional Oodle (PlM) via vendor palooz
 _palooz = None
 _palooz_error: str | None = None
@@ -16,15 +18,7 @@ _TOOL_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _find_py312() -> Path | None:
-    candidates = [
-        _TOOL_ROOT.parent / "python312" / "python.exe",
-        Path(r"C:\Users\Luckysugar\Downloads\python312\python.exe"),
-        _TOOL_ROOT / "python312" / "python.exe",
-    ]
-    for c in candidates:
-        if c.is_file():
-            return c
-    return None
+    return runtime.find_py312()
 
 
 def _load_palooz():
@@ -66,9 +60,11 @@ def _load_palooz():
 def _worker_json(args: list[str]) -> dict:
     py = _find_py312()
     if py is None:
+        target = runtime.appdata_runtime_dir()
         raise RuntimeError(
-            "PlM (Oodle) saves need Python 3.12 + palooz. "
-            "Expected Downloads\\python312\\python.exe"
+            "PlM (Oodle) saves need a small Python 3.12 helper + palooz.\n\n"
+            "In the tool, click:  Install PlM support\n"
+            f"(installs official Python into:\n{target})"
         )
     worker = _TOOL_ROOT / "palworld_ms" / "sav_worker.py"
     cmd = [str(py), str(worker), *args]
@@ -255,11 +251,21 @@ def palooz_available() -> tuple[bool, str]:
     p = _load_palooz()
     if p is not None:
         return True, "Oodle (PlM) ready (in-process)"
-    # worker fallback?
-    try:
-        info = _worker_json(["probe"])
-        if info.get("ok"):
-            return True, "Oodle (PlM) ready (Python 3.12 worker)"
-    except Exception as e:
-        return False, f"PlM unavailable: {_palooz_error or e}"
-    return False, _palooz_error or "palooz missing"
+    st = runtime.runtime_status()
+    if st["ready"] and st["python"]:
+        try:
+            info = _worker_json(["probe"])
+            if info.get("ok"):
+                return True, f"Oodle (PlM) ready · {st['python']}"
+        except Exception as e:
+            return False, f"PlM worker failed: {e}"
+    # Try probe only if python exists
+    py = _find_py312()
+    if py is not None:
+        try:
+            info = _worker_json(["probe"])
+            if info.get("ok"):
+                return True, f"Oodle (PlM) ready · {py}"
+        except Exception as e:
+            return False, f"PlM unavailable: {e}"
+    return False, st["detail"] or (_palooz_error or "palooz missing")

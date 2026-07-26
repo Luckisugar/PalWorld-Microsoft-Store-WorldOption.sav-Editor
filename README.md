@@ -1,13 +1,5 @@
 # Palworld Microsoft Store — WorldOption.sav Editor
 
-<p align="center">
-  <img src="screenshots/01-main-window.png" alt="Main window — world list with real names" width="900" />
-</p>
-
-<p align="center">
-  <img src="screenshots/02-worldoption-editor.png" alt="WorldOption.sav editor with search" width="900" />
-</p>
-
 Dark GUI toolkit to **scan**, **extract**, and **edit** Palworld world settings for the **Microsoft Store / PC Game Pass** version.
 
 MS Store saves live in Xbox **WGS** containers (opaque folders under `%LocalAppData%\Packages\…`), not the Steam-style path. This tool:
@@ -37,27 +29,19 @@ No manual file hunting required.
 ## Requirements
 
 - **Windows** (MS Store / Game Pass PC Palworld)
-- **Python 3.10+** with **tkinter** (normal python.org install — *not* the embeddable-only build)
-- For **PlM (Oodle)** worlds (most recent saves):
-  - **Python 3.12** x64, and  
-  - `vendor/palooz.pyd` (included in this repo)
+- **Python 3.10+** with **tkinter** (normal python.org install)
 
-The app runs on your main Python. PlM compress/decompress is handled by a **Python 3.12 worker** when needed.
+### PlM (Oodle) — one-click install
 
-### Recommended layout
+Newer worlds use **PlM** compression. In the app click **Install PlM support**:
 
-```
-Downloads\
-  PalworldMSTool\          ← this repo
-    run.bat
-    app.py
-    vendor\palooz.pyd
-  python312\               ← optional but needed for PlM
-    python.exe
-    palooz.pyd             ← copy of vendor\palooz.pyd
-```
+1. Downloads **official** Python 3.12 embeddable from python.org  
+2. Installs it to  
+   `%LOCALAPPDATA%\PalworldMSTool\runtime\python312\`  
+   (not Downloads)  
+3. Copies bundled `vendor\palooz.pyd` next to that Python  
 
-If `..\python312\python.exe` is missing, place a Python **3.12** install there (or edit paths in `palworld_ms/sav.py`).
+Internet required once (~15 MB). No admin rights.
 
 ---
 

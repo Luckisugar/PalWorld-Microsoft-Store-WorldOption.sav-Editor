@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "vendor"))
 
 import customtkinter as ctk
 
-from palworld_ms import __version__, sav, wgs, worlds
+from palworld_ms import __version__, runtime, sav, wgs, worlds
 from palworld_ms.worlds import WorldInfo
 from editor_window import WorldOptionEditor
 
@@ -180,6 +180,18 @@ class App(ctk.CTk):
             right, text="Ready", font=ctk.CTkFont(size=12), text_color=MUTED
         )
         self.status_lbl.pack(side="left", padx=(0, 14))
+
+        self.setup_btn = ctk.CTkButton(
+            right,
+            text="Install PlM support",
+            width=140,
+            height=34,
+            corner_radius=8,
+            fg_color="#2a3142",
+            hover_color="#353e52",
+            command=self.install_plm_runtime,
+        )
+        self.setup_btn.pack(side="left", padx=(0, 8))
 
         self.scan_btn = ctk.CTkButton(
             right,
@@ -357,6 +369,7 @@ class App(ctk.CTk):
         state = "disabled" if busy else "normal"
         for b in (
             self.scan_btn,
+            self.setup_btn,
             self.edit_btn,
             self.extract_btn,
             self.extract_all_btn,
@@ -406,6 +419,14 @@ class App(ctk.CTk):
         self.set_status(f"{len(found)} world(s)", GREEN if found else ORANGE)
         self.log(f"Found {len(found)} world(s).")
         self.log(f"PlM/Oodle: {plm_msg}")
+        if not ok_plm:
+            self.set_status("PlM support missing", ORANGE)
+            self.log(
+                "Newer saves need a one-time PlM install. "
+                "Click “Install PlM support” (downloads official Python 3.12 "
+                f"into {runtime.appdata_runtime_dir()})."
+            )
+            self.after(300, self._offer_plm_install)
         if running:
             self.log("⚠ Palworld is running — close it before applying edits.")
             self.set_status(f"{len(found)} world(s) · game open", ORANGE)
@@ -414,6 +435,91 @@ class App(ctk.CTk):
 
         if found:
             self.select_world(found[0])
+
+    def _offer_plm_install(self):
+        if self._busy:
+            return
+        st = runtime.runtime_status()
+        if st["ready"]:
+            return
+        if messagebox.askyesno(
+            "Install PlM support?",
+            "Your worlds use PlM (Oodle) compression.\n\n"
+            "This needs a small one-time setup:\n"
+            "• Official Python 3.12 (embeddable)\n"
+            "• Bundled palooz helper from this tool\n\n"
+            f"Install folder:\n{runtime.appdata_runtime_dir()}\n\n"
+            "Internet required (~15 MB). Install now?",
+        ):
+            self.install_plm_runtime()
+
+    def install_plm_runtime(self):
+        if self._busy:
+            return
+        st = runtime.runtime_status()
+        if st["ready"]:
+            messagebox.showinfo(
+                "Already ready",
+                f"PlM support is already working.\n\n{st['detail']}",
+            )
+            return
+        if not runtime.find_palooz_pyd():
+            messagebox.showerror(
+                "Missing palooz",
+                "vendor\\palooz.pyd is missing from the tool folder.\n"
+                "Re-download the full release zip from GitHub.",
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Install PlM support",
+            "Download official Python 3.12 embeddable from python.org\n"
+            f"into:\n{runtime.appdata_runtime_dir()}\n\n"
+            "Then attach palooz from this tool. Continue?",
+        ):
+            return
+
+        self._set_busy(True)
+        self.set_status("Installing PlM…", ORANGE)
+        self.log("Installing PlM runtime (official Python 3.12)…")
+
+        def work():
+            lines: list[str] = []
+
+            def log(msg: str):
+                lines.append(msg)
+                self.after(0, lambda m=msg: self.log(m))
+
+            try:
+                exe = runtime.ensure_py312(log)
+                self.after(0, lambda: self._plm_install_done(str(exe), None))
+            except Exception as e:
+                self.after(0, lambda: self._plm_install_done(None, e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _plm_install_done(self, exe: str | None, err: Exception | None):
+        self._set_busy(False)
+        if err:
+            self.set_status("PlM install failed", RED)
+            self.log(f"ERROR: {err}")
+            messagebox.showerror("Install failed", str(err))
+            return
+        ok, msg = sav.palooz_available()
+        self.log(f"PlM check: {msg}")
+        if ok:
+            self.set_status("PlM ready", GREEN)
+            self.setup_btn.configure(text="PlM ready")
+            messagebox.showinfo(
+                "PlM ready",
+                "PlM (Oodle) support is installed.\n\n"
+                f"Python: {exe}\n\n"
+                "Click Scan saves again if worlds failed to load fully.",
+            )
+            self.scan()
+        else:
+            self.set_status("PlM still missing", ORANGE)
+            messagebox.showwarning("Not ready", msg)
 
     def _rebuild_list(self):
         for w in self.list_frame.winfo_children():
