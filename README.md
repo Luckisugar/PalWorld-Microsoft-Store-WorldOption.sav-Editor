@@ -1,113 +1,93 @@
-# Palworld Microsoft Store — WorldOption.sav Editor
+<div align="center">
 
-Dark GUI toolkit to **scan**, **extract**, and **edit** Palworld world settings for the **Microsoft Store / PC Game Pass** version.
+# Palworld MS Store WorldOption.sav Editor
 
-MS Store saves live in Xbox **WGS** containers (opaque folders under `%LocalAppData%\Packages\…`), not the Steam-style path. This tool:
+### Edit co-op slots and world settings for Microsoft Store / Game Pass Palworld
 
-1. Finds your worlds automatically  
-2. Opens `WorldOption.sav` (PlZ zlib **or** PlM Oodle)  
-3. Lets you edit all settings (including **CoopPlayerMaxNum**)  
-4. Writes back into the live WGS blob with an auto-backup  
+WGS containers. PlZ + PlM. Dark GUI. Auto-backup. No manual path hunting.
 
-No manual file hunting required.
+[![Windows](https://img.shields.io/badge/Windows-MS%20Store%20%2F%20Game%20Pass-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.xbox.com)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![GitHub stars](https://img.shields.io/github/stars/Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor?style=for-the-badge)](https://github.com/Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor/stargazers)
+
+**Author:** [Luckisugar](https://github.com/Luckisugar) · **Repo:** [PalWorld-Microsoft-Store-WorldOption.sav-Editor](https://github.com/Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor)
+
+[Features](#-features) · [Install](#-install) · [Usage](#-usage) · [Notes](#-notes)
+
+</div>
+
+---
+
+## Why this exists
+
+Microsoft Store / PC Game Pass Palworld saves live in **Xbox WGS** containers under `%LocalAppData%\Packages\…` — not the Steam path.  
+Editing **co-op player max** (and other `WorldOption.sav` fields) by hand is pain.
+
+This tool scans worlds, opens `WorldOption.sav` (**PlZ zlib** or **PlM Oodle**), lets you edit settings (including **CoopPlayerMaxNum**), and writes back with an auto-backup.
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/01-main-window.png" alt="Main window" width="85%" />
+</p>
+<p align="center">
+  <img src="screenshots/02-worldoption-editor.png" alt="WorldOption editor" width="85%" />
+</p>
 
 ---
 
 ## Features
 
-| Feature | Description |
-|--------|-------------|
-| **Scan worlds** | Lists MS Store worlds with player count, size, last modified, co-op max |
-| **Edit WorldOption.sav** | Full settings editor with **search** |
-| **Extract world** | Unpacks a world to normal folders (Steam-like layout) |
+| | |
+|:--|:--|
+| **Scan worlds** | Lists MS Store worlds (players, size, modified, co-op max) |
+| **Edit WorldOption.sav** | Full settings editor with search |
+| **Extract world** | Unpacks to a normal (Steam-like) folder layout |
 | **Extract all** | Full account dump |
-| **Auto-backup** | Copies the original blob before every save |
-| **PlZ + PlM** | Supports older zlib and newer Oodle saves |
+| **Auto-backup** | Original blob copied before every save |
+| **PlZ + PlM** | Older zlib and newer Oodle saves |
 
 ---
 
-## Requirements
+## Install
 
-- **Windows** (MS Store / Game Pass PC Palworld)
-- **Python 3.10+** with **tkinter** (normal python.org install)
+1. Clone or download this repo  
+2. Install **Python 3.10+** with **tkinter** ([python.org](https://www.python.org/downloads/))  
+3. Double-click **`run.bat`** (or run `bootstrap.ps1` / `python app.py` as documented in-repo)
 
-### PlM (Oodle) — one-click install
+### PlM (Oodle) support
 
-Newer worlds use **PlM** compression. In the app click **Install PlM support**:
-
-1. Downloads **official** Python 3.12 embeddable from python.org  
-2. Installs it to  
-   `%LOCALAPPDATA%\PalworldMSTool\runtime\python312\`  
-   (not Downloads)  
-3. Copies bundled `vendor\palooz.pyd` next to that Python  
-
-Internet required once (~15 MB). No admin rights.
+Newer worlds use **PlM**. In the app, use **Install PlM support** — it fetches an official embeddable Python runtime and wires PlM deps under `%LOCALAPPDATA%\PalworldMSTool\`.
 
 ---
 
-## Quick start
+## Usage
 
-**No Python installed?** Just double-click `run.bat` — it will offer to download official Python from python.org, install packages, then launch.
-
-```bat
-git clone https://github.com/Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor.git
-cd PalWorld-Microsoft-Store-WorldOption.sav-Editor
-run.bat
-```
-
-Or if you already have Python 3.10+:
-
-```bat
-python -m pip install -r requirements.txt
-python app.py
-```
-
-1. **Close Palworld** completely.  
-2. Click **Scan saves**.  
-3. Select your world.  
-4. Click **Edit WorldOption.sav**.  
-5. Search for `CoopPlayerMaxNum` (or any other setting).  
-6. Change values → **Save to live save**.  
-7. Launch the game and load that world.
+1. Launch the tool  
+2. **Scan** for MS Store worlds  
+3. Open a world → edit **WorldOption** (search for co-op / player fields)  
+4. Save — backup is created automatically  
 
 ---
 
-## Notes & limits
+## Notes
 
-- Close the game before saving, or in-memory autosave can overwrite your edit.  
-- UI may still show `x/4` even when more players can join.  
-- Raising co-op max in the file does **not** always bypass every Xbox/session invite limit — dedicated servers are more reliable for large groups.  
-- This is an unofficial community tool. Use at your own risk; always keep backups (the tool creates them under `backups/`).
-
----
-
-## Project layout
-
-```
-app.py                 Main window
-editor_window.py       WorldOption editor + search
-run.bat                Launcher (installs deps if needed)
-requirements.txt
-palworld_ms/
-  wgs.py               WGS container reader
-  sav.py               PlZ/PlM sav helpers
-  sav_worker.py        Python 3.12 Oodle worker CLI
-  worlds.py            Discover / extract / backup
-  worldoption.py       Full WorldOption load/edit/save
-vendor/
-  palooz.pyd           Oodle bindings (Windows x64, CPython 3.12)
-```
+- **MS Store / Game Pass PC** path model — not a Steam-only tool  
+- Close the game before writing saves when possible  
+- You break it, you buy it — keep backups (the tool already does one)
 
 ---
 
-## Credits
+## Star History
 
-- WGS container layout: [Z1ni/XGP-save-extractor](https://github.com/Z1ni/XGP-save-extractor)  
-- GVAS parse/write: [cheahjs/palworld-save-tools](https://github.com/cheahjs/palworld-save-tools)  
-- Oodle (`palooz`): PalworldSaveTools / ooz ecosystem  
+[![Star History Chart](https://api.star-history.com/svg?repos=Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor&type=Date)](https://star-history.com/#Luckisugar/PalWorld-Microsoft-Store-WorldOption.sav-Editor&Date)
 
 ---
 
-## License
+<div align="center">
 
-Use freely for personal / community tooling. Third-party binaries (e.g. `palooz`) keep their own licenses.
+Made for gamers who refuse the 4-player cap · [Luckisugar](https://github.com/Luckisugar)
+
+</div>
