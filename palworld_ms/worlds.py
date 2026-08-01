@@ -190,11 +190,47 @@ def _level_part_sort_key(path: Path) -> tuple:
     return (2, 0, stem.lower())
 
 
-def _restripe_sav_blob(data: bytes) -> bytes:
-    """Decompress + recompress to drop CNK outer wrapper (Steam/dedicated-friendly)."""
-    gvas, magic, save_type = sav.decompress_sav(data)
-    out_type = save_type if magic == b"PlZ" else 0x31
-    return sav.compress_sav(gvas, magic, out_type)
+def _to_steam_sav_bytes(data: bytes) -> tuple[bytes, dict]:
+    """
+    Make a Game Pass / MS blob safe for Steam + dedicated servers.
+
+    Prefer **CNK strip only** (keeps original PlZ double-zlib headers intact).
+    Full decompress/recompress is a fallback and must use correct 0x32 header rules.
+    """
+    info: dict = {"method": None, "had_cnk": False, "error": None}
+    if len(data) >= 24 and data[8:11] == b"CNK":
+        info["had_cnk"] = True
+        stripped = sav.strip_cnk_wrapper(data)
+        # Validate with game-compatible decompress before accepting
+        try:
+            sav.decompress_sav(stripped)
+            info["method"] = "cnk_strip"
+            return stripped, info
+        except Exception as e:
+            info["error"] = f"cnk_strip validate failed: {e}"
+
+    # Already standard PlZ/PlM, or strip failed — try identity if valid
+    try:
+        sav.decompress_sav(data)
+        info["method"] = "identity"
+        return data, info
+    except Exception as e1:
+        info["error"] = f"identity failed: {e1}"
+
+    # Last resort: full restripe with fixed 0x32 compress
+    try:
+        gvas, magic, save_type = sav.decompress_sav(
+            sav.strip_cnk_wrapper(data) if info["had_cnk"] else data
+        )
+        out_type = save_type if magic == b"PlZ" else 0x31
+        out = sav.compress_sav(gvas, magic, out_type)
+        sav.decompress_sav(out)  # must round-trip
+        info["method"] = "restripe"
+        info["error"] = None
+        return out, info
+    except Exception as e2:
+        info["error"] = f"restripe failed: {e2}"
+        raise ValueError(info["error"]) from e2
 
 
 def normalize_steam_world_layout(world_dir: Path) -> dict:
@@ -211,6 +247,8 @@ def normalize_steam_world_layout(world_dir: Path) -> dict:
         "already_flat": False,
         "parts": 0,
         "level_source": None,
+        "method": None,
+        "had_cnk": False,
         "rewrapped": False,
         "rewrapped_error": None,
         "level_bytes": 0,
@@ -218,24 +256,6 @@ def normalize_steam_world_layout(world_dir: Path) -> dict:
 
     level_sav = world_dir / "Level.sav"
     level_dir = world_dir / "Level"
-
-    if level_sav.is_file() and not level_dir.is_dir():
-        report["already_flat"] = True
-        report["level_source"] = "Level.sav"
-        report["parts"] = 1
-        report["level_bytes"] = level_sav.stat().st_size
-        # Still try CNK strip when applicable
-        try:
-            raw = level_sav.read_bytes()
-            if raw[8:11] == b"CNK" or (len(raw) > 20 and raw[20:23] in (b"PlZ", b"PlM")):
-                new = _restripe_sav_blob(raw)
-                if new != raw:
-                    level_sav.write_bytes(new)
-                    report["rewrapped"] = True
-                    report["level_bytes"] = len(new)
-        except Exception as e:
-            report["rewrapped_error"] = str(e)
-        return report
 
     parts: list[Path] = []
     if level_dir.is_dir():
@@ -245,13 +265,13 @@ def normalize_steam_world_layout(world_dir: Path) -> dict:
         else:
             parts = sorted(level_dir.glob("*.sav"), key=_level_part_sort_key)
 
-    if not parts:
-        if level_sav.is_file():
-            report["already_flat"] = True
-            report["level_source"] = "Level.sav"
-            report["parts"] = 1
-            report["level_bytes"] = level_sav.stat().st_size
-            return report
+    if not parts and level_sav.is_file():
+        report["already_flat"] = True
+        parts = [level_sav]
+        report["level_source"] = "Level.sav"
+    elif parts:
+        report["level_source"] = ", ".join(p.name for p in parts)
+    else:
         raise FileNotFoundError(
             f"Steam-style export needs Level.sav or Level/*.sav under:\n{world_dir}"
         )
@@ -259,18 +279,21 @@ def normalize_steam_world_layout(world_dir: Path) -> dict:
     if len(parts) == 1:
         data = parts[0].read_bytes()
     else:
-        # Multi-chunk Game Pass layout: join in sort order, then restripe if possible
+        # Multi-chunk Game Pass: join in sort order
         data = b"".join(p.read_bytes() for p in parts)
 
     report["parts"] = len(parts)
-    report["level_source"] = ", ".join(p.name for p in parts)
 
     try:
-        data = _restripe_sav_blob(data)
-        report["rewrapped"] = True
+        data, conv = _to_steam_sav_bytes(data)
+        report["method"] = conv.get("method")
+        report["had_cnk"] = bool(conv.get("had_cnk"))
+        report["rewrapped"] = conv.get("method") in ("cnk_strip", "restripe")
+        if conv.get("error"):
+            report["rewrapped_error"] = conv["error"]
     except Exception as e:
         report["rewrapped_error"] = str(e)
-        # Keep raw flattened bytes (often already a valid single-file sav)
+        raise
 
     level_sav.write_bytes(data)
     report["level_bytes"] = len(data)

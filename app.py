@@ -732,17 +732,14 @@ class App(ctk.CTk):
         if steam_style and steam_report:
             src = steam_report.get("level_source") or "?"
             parts = steam_report.get("parts")
-            rew = steam_report.get("rewrapped")
+            method = steam_report.get("method") or "?"
             nbytes = steam_report.get("level_bytes")
             self.log(
                 f"Steam layout: Level.sav from [{src}] "
-                f"({parts} part(s), {nbytes} bytes, rewrapped={rew})"
+                f"({parts} part(s), {nbytes} bytes, method={method})"
             )
             if steam_report.get("rewrapped_error"):
-                self.log(
-                    f"Note: CNK restripe skipped ({steam_report['rewrapped_error']}); "
-                    "raw Level.sav still written."
-                )
+                self.log(f"Note: {steam_report['rewrapped_error']}")
             level_path = Path(out) / "Level.sav"
             if not level_path.is_file():
                 self.log("WARNING: Level.sav missing after Steam layout pass.")

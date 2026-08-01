@@ -99,13 +99,34 @@ def parse_header(data: bytes) -> tuple[int, int, bytes, int, int]:
 
 
 def decompress_sav(data: bytes) -> tuple[bytes, bytes, int]:
+    """
+    Decompress a Palworld .sav blob to raw GVAS.
+
+    PlZ save_type 0x32 is *double* zlib. The header ``compressed_len`` field is the
+    size after the *first* decompress (inner), while the on-disk payload is the outer
+    wrap — same contract as palworld-save-tools / the game.
+    """
     unc, cmp, magic, save_type, offset = parse_header(data)
-    payload = data[offset : offset + cmp]
     if magic == b"PlZ":
-        out = zlib.decompress(payload)
+        # Decompress all bytes after the header (not a cmp-sized slice). For 0x32 the
+        # first pass yields a buffer whose length must equal the header cmp field.
+        out = zlib.decompress(data[offset:])
         if save_type == 0x32:
+            if len(out) != cmp:
+                raise ValueError(
+                    f"PlZ 0x32 inner size mismatch: {len(out)} != header cmp {cmp}"
+                )
             out = zlib.decompress(out)
+        elif save_type == 0x31:
+            if cmp != len(data) - offset and len(out) != unc:
+                # tolerate minor header quirks if GVAS size matches
+                pass
+        elif save_type == 0x30:
+            pass
+        else:
+            raise ValueError(f"Unhandled PlZ save_type: {save_type:#x}")
     elif magic == b"PlM":
+        payload = data[offset : offset + cmp] if cmp else data[offset:]
         palooz = _load_palooz()
         if palooz is None:
             raise RuntimeError(
@@ -121,28 +142,51 @@ def decompress_sav(data: bytes) -> tuple[bytes, bytes, int]:
 
 
 def compress_sav(gvas: bytes, magic: bytes = b"PlM", save_type: int = 0x31) -> bytes:
+    """
+    Compress GVAS to a .sav blob.
+
+    For PlZ 0x32, the header ``compressed_len`` is the *inner* zlib size; the file
+    body is zlib(zlib(gvas)). Writing the outer size there makes PalServer report
+    \"Save data is corrupted\".
+    """
     if magic == b"PlZ":
-        compressed = zlib.compress(gvas)
+        inner = zlib.compress(gvas)
+        compressed_len = len(inner)
         if save_type == 0x32:
-            compressed = zlib.compress(compressed)
+            payload = zlib.compress(inner)
+        else:
+            # 0x30 / 0x31: single zlib; header cmp == payload size
+            payload = inner
+            save_type = 0x31 if save_type not in (0x30, 0x31, 0x32) else save_type
+            if save_type == 0x30:
+                save_type = 0x31
+            compressed_len = len(payload)
     elif magic == b"PlM":
         palooz = _load_palooz()
         if palooz is None:
             raise RuntimeError(_palooz_error or "palooz missing")
         # Kraken=8, Normal=4
-        compressed = palooz.compress(8, 4, gvas, len(gvas))
-        if not compressed:
+        payload = palooz.compress(8, 4, gvas, len(gvas))
+        if not payload:
             raise RuntimeError("palooz compress returned empty")
+        compressed_len = len(payload)
         save_type = 0x31
     else:
         raise ValueError(f"Unknown magic {magic!r}")
     return (
         len(gvas).to_bytes(4, "little")
-        + len(compressed).to_bytes(4, "little")
+        + compressed_len.to_bytes(4, "little")
         + magic
         + bytes([save_type])
-        + compressed
+        + payload
     )
+
+
+def strip_cnk_wrapper(data: bytes) -> bytes:
+    """If the blob is CNK-wrapped (Game Pass), return the inner PlZ/PlM .sav bytes."""
+    if len(data) >= 24 and data[8:11] == b"CNK":
+        return data[12:]
+    return data
 
 
 def read_worldoption_ints(path: Path) -> dict:

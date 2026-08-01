@@ -78,6 +78,7 @@ Newer worlds use **PlM**. In the app, use **Install PlM support** — it fetches
 
 - **MS Store / Game Pass PC** path model — not a Steam-only tool  
 - Close the game before writing saves when possible  
+- **Steam / dedicated export (v0.5.8+):** strips Game Pass `CNK` wrappers and keeps valid PlZ double-zlib headers (fixes PalServer “Save data is corrupted” from bad recompress)  
 - You break it, you buy it — keep backups (the tool already does one)
 
 ---
