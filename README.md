@@ -44,7 +44,8 @@ This tool scans worlds, opens `WorldOption.sav` (**PlZ zlib** or **PlM Oodle**),
 |:--|:--|
 | **Scan worlds** | Lists MS Store worlds (players, size, modified, co-op max) |
 | **Edit WorldOption.sav** | Full settings editor with search |
-| **Extract world** | Unpacks to a normal (Steam-like) folder layout |
+| **Extract world** | Unpacks MS Store blobs to a readable folder tree |
+| **Steam / dedicated export** | Optional checkbox on Extract world → real `Level.sav` layout for dedicated / Palsitter |
 | **Extract all** | Full account dump |
 | **Auto-backup** | Original blob copied before every save |
 | **PlZ + PlM** | Older zlib and newer Oodle saves |
@@ -69,6 +70,7 @@ Newer worlds use **PlM**. In the app, use **Install PlM support** — it fetches
 2. **Scan** for MS Store worlds  
 3. Open a world → edit **WorldOption** (search for co-op / player fields)  
 4. Save — backup is created automatically  
+5. Optional: tick **Steam / dedicated layout (Level.sav)** → **Extract world** → point dedicated tools (e.g. Palsitter) at that `Level.sav`  
 
 ---
 

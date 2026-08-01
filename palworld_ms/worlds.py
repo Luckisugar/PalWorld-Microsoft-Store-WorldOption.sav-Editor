@@ -180,8 +180,125 @@ def _fill_level_meta(info: WorldInfo, path: Path) -> None:
         pass
 
 
-def extract_world(info: WorldInfo, dest_dir: Path, *, include_slots: bool = True) -> Path:
-    """Extract one world to dest_dir/world_id/ ... returns folder path."""
+def _level_part_sort_key(path: Path) -> tuple:
+    """Sort Level/ pieces: Level.sav first, then 01/02…, then other names."""
+    stem = path.stem
+    if stem.lower() == "level":
+        return (0, 0, stem.lower())
+    if stem.isdigit():
+        return (1, int(stem), stem.lower())
+    return (2, 0, stem.lower())
+
+
+def _restripe_sav_blob(data: bytes) -> bytes:
+    """Decompress + recompress to drop CNK outer wrapper (Steam/dedicated-friendly)."""
+    gvas, magic, save_type = sav.decompress_sav(data)
+    out_type = save_type if magic == b"PlZ" else 0x31
+    return sav.compress_sav(gvas, magic, out_type)
+
+
+def normalize_steam_world_layout(world_dir: Path) -> dict:
+    """
+    Turn an extracted MS Store world tree into Steam / dedicated layout.
+
+    MS Store often stores the world as ``Level/Level.sav`` or ``Level/01.sav``.
+    Steam + dedicated + Palsitter expect ``Level.sav`` at the world root next to
+    ``Players/``, ``LevelMeta.sav``, and optional ``WorldOption.sav``.
+
+    Slot* backups are left alone if present (caller should skip them on extract).
+    """
+    report: dict = {
+        "already_flat": False,
+        "parts": 0,
+        "level_source": None,
+        "rewrapped": False,
+        "rewrapped_error": None,
+        "level_bytes": 0,
+    }
+
+    level_sav = world_dir / "Level.sav"
+    level_dir = world_dir / "Level"
+
+    if level_sav.is_file() and not level_dir.is_dir():
+        report["already_flat"] = True
+        report["level_source"] = "Level.sav"
+        report["parts"] = 1
+        report["level_bytes"] = level_sav.stat().st_size
+        # Still try CNK strip when applicable
+        try:
+            raw = level_sav.read_bytes()
+            if raw[8:11] == b"CNK" or (len(raw) > 20 and raw[20:23] in (b"PlZ", b"PlM")):
+                new = _restripe_sav_blob(raw)
+                if new != raw:
+                    level_sav.write_bytes(new)
+                    report["rewrapped"] = True
+                    report["level_bytes"] = len(new)
+        except Exception as e:
+            report["rewrapped_error"] = str(e)
+        return report
+
+    parts: list[Path] = []
+    if level_dir.is_dir():
+        inner_named = level_dir / "Level.sav"
+        if inner_named.is_file():
+            parts = [inner_named]
+        else:
+            parts = sorted(level_dir.glob("*.sav"), key=_level_part_sort_key)
+
+    if not parts:
+        if level_sav.is_file():
+            report["already_flat"] = True
+            report["level_source"] = "Level.sav"
+            report["parts"] = 1
+            report["level_bytes"] = level_sav.stat().st_size
+            return report
+        raise FileNotFoundError(
+            f"Steam-style export needs Level.sav or Level/*.sav under:\n{world_dir}"
+        )
+
+    if len(parts) == 1:
+        data = parts[0].read_bytes()
+    else:
+        # Multi-chunk Game Pass layout: join in sort order, then restripe if possible
+        data = b"".join(p.read_bytes() for p in parts)
+
+    report["parts"] = len(parts)
+    report["level_source"] = ", ".join(p.name for p in parts)
+
+    try:
+        data = _restripe_sav_blob(data)
+        report["rewrapped"] = True
+    except Exception as e:
+        report["rewrapped_error"] = str(e)
+        # Keep raw flattened bytes (often already a valid single-file sav)
+
+    level_sav.write_bytes(data)
+    report["level_bytes"] = len(data)
+
+    # Remove nested Level/ so the tree matches Steam SaveGames layout
+    if level_dir.is_dir():
+        shutil.rmtree(level_dir, ignore_errors=True)
+
+    return report
+
+
+def extract_world(
+    info: WorldInfo,
+    dest_dir: Path,
+    *,
+    include_slots: bool = True,
+    steam_style: bool = False,
+) -> Path:
+    """
+    Extract one world to dest_dir/world_id/ ... returns folder path.
+
+    steam_style=True:
+      - skips Slot* backups (dedicated / Steam host save does not use them)
+      - flattens Level/* → Level.sav at world root (Palsitter / dedicated import)
+    """
+    if steam_style:
+        include_slots = False
+
     out = dest_dir / info.world_id
     out.mkdir(parents=True, exist_ok=True)
 
@@ -194,6 +311,28 @@ def extract_world(info: WorldInfo, dest_dir: Path, *, include_slots: bool = True
         target = out / inner
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(blob, target)
+
+    if steam_style:
+        report = normalize_steam_world_layout(out)
+        # stash for callers / logging via a side-car text file (tiny, optional)
+        try:
+            lines = [
+                "steam_style_export=1",
+                f"parts={report.get('parts')}",
+                f"level_source={report.get('level_source')}",
+                f"rewrapped={report.get('rewrapped')}",
+                f"level_bytes={report.get('level_bytes')}",
+            ]
+            if report.get("rewrapped_error"):
+                lines.append(f"rewrapped_error={report['rewrapped_error']}")
+            (out / ".palsitter-steam-export.txt").write_text(
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
+        except Exception:
+            pass
+        # attach for Python callers
+        extract_world.last_steam_report = report  # type: ignore[attr-defined]
+
     return out
 
 

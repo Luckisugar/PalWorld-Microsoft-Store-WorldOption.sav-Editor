@@ -282,6 +282,31 @@ class App(ctk.CTk):
         )
         self.extract_btn.pack(fill="x", pady=4)
 
+        # Optional: flatten to Steam / dedicated Level.sav layout (Palsitter etc.)
+        self.steam_export_var = ctk.BooleanVar(value=False)
+        self.steam_export_chk = ctk.CTkCheckBox(
+            actions,
+            text="Steam / dedicated layout (Level.sav)",
+            variable=self.steam_export_var,
+            font=ctk.CTkFont(size=11),
+            text_color=MUTED,
+            fg_color=ACCENT,
+            hover_color=ACCENT_DIM,
+            border_color="#3a4258",
+            checkmark_color="#0a1210",
+        )
+        self.steam_export_chk.pack(fill="x", pady=(0, 6), padx=2)
+        self.steam_export_hint = ctk.CTkLabel(
+            actions,
+            text="Off = raw MS extract. On = Level.sav at world root for dedicated/Palsitter.",
+            font=ctk.CTkFont(size=10),
+            text_color="#5c6478",
+            anchor="w",
+            justify="left",
+            wraplength=280,
+        )
+        self.steam_export_hint.pack(fill="x", pady=(0, 6), padx=2)
+
         self.extract_all_btn = ctk.CTkButton(
             actions,
             text="Extract all worlds",
@@ -657,21 +682,45 @@ class App(ctk.CTk):
         if self._busy:
             return
         info = self.selected
+        steam_style = bool(self.steam_export_var.get())
         self._set_busy(True)
-        self.set_status("Extracting…", ORANGE)
+        self.set_status(
+            "Extracting (Steam layout)…" if steam_style else "Extracting…",
+            ORANGE,
+        )
+        if steam_style:
+            self.log(
+                "Steam / dedicated layout ON — will write Level.sav at world root "
+                "(no Slot backups)."
+            )
 
         def work():
             try:
                 stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                dest = EXPORTS / f"{info.short_id}_{stamp}"
-                out = worlds.extract_world(info, dest, include_slots=True)
-                self.after(0, lambda: self._extract_done(out, None))
+                suffix = "_steam" if steam_style else ""
+                dest = EXPORTS / f"{info.short_id}_{stamp}{suffix}"
+                out = worlds.extract_world(
+                    info,
+                    dest,
+                    include_slots=not steam_style,
+                    steam_style=steam_style,
+                )
+                report = getattr(worlds.extract_world, "last_steam_report", None)
+                self.after(
+                    0,
+                    lambda o=out, r=report, s=steam_style: self._extract_done(
+                        o, None, s, r
+                    ),
+                )
             except Exception as e:
-                self.after(0, lambda: self._extract_done(None, e))
+                self.after(
+                    0,
+                    lambda err=e, s=steam_style: self._extract_done(None, err, s, None),
+                )
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _extract_done(self, out, err):
+    def _extract_done(self, out, err, steam_style=False, steam_report=None):
         self._set_busy(False)
         if err:
             self.set_status("Extract failed", RED)
@@ -680,7 +729,31 @@ class App(ctk.CTk):
             return
         self.set_status("Extracted", GREEN)
         self.log(f"Extracted → {out}")
-        if messagebox.askyesno("Done", f"Extracted to:\n{out}\n\nOpen folder?"):
+        if steam_style and steam_report:
+            src = steam_report.get("level_source") or "?"
+            parts = steam_report.get("parts")
+            rew = steam_report.get("rewrapped")
+            nbytes = steam_report.get("level_bytes")
+            self.log(
+                f"Steam layout: Level.sav from [{src}] "
+                f"({parts} part(s), {nbytes} bytes, rewrapped={rew})"
+            )
+            if steam_report.get("rewrapped_error"):
+                self.log(
+                    f"Note: CNK restripe skipped ({steam_report['rewrapped_error']}); "
+                    "raw Level.sav still written."
+                )
+            level_path = Path(out) / "Level.sav"
+            if not level_path.is_file():
+                self.log("WARNING: Level.sav missing after Steam layout pass.")
+        done_msg = f"Extracted to:\n{out}"
+        if steam_style:
+            done_msg += (
+                "\n\nSteam / dedicated layout:\n"
+                "  world folder → Level.sav + Players/\n"
+                "Point Palsitter Browse at Level.sav."
+            )
+        if messagebox.askyesno("Done", f"{done_msg}\n\nOpen folder?"):
             self._open_path(out)
 
     def extract_all(self):
